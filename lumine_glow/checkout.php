@@ -10,16 +10,16 @@ if (empty($_SESSION['cart'])) {
     exit;
 }
 
-// Get cart items
+// Get cart items - FIXED: using 'product' table with 'product_id'
 $ids = array_keys($_SESSION['cart']);
 $placeholders = implode(',', array_fill(0, count($ids), '?'));
-$stmt = $pdo->prepare("SELECT * FROM products WHERE id IN ($placeholders)");
+$stmt = $pdo->prepare("SELECT * FROM product WHERE product_id IN ($placeholders)");
 $stmt->execute($ids);
 $products = $stmt->fetchAll();
 
 $total = 0;
 foreach ($products as $p) {
-    $total += $p['price'] * $_SESSION['cart'][$p['id']];
+    $total += $p['price'] * $_SESSION['cart'][$p['product_id']];
 }
 
 $error = '';
@@ -46,25 +46,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $pdo->beginTransaction();
                 
-                // Create order
-                $stmt = $pdo->prepare("INSERT INTO orders (customer_name, email, address, city, total_amount, status) VALUES (?, ?, ?, ?, ?, 'Pending')");
-                $stmt->execute([$name, $email, $address, $city, $total]);
+                // Generate order number
+                $orderNumber = 'ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
+                
+                // Create order - FIXED: using 'order' table with backticks
+                $stmt = $pdo->prepare("
+                    INSERT INTO `order` (user_id, address_id, order_number, total_amount, subtotal, order_status) 
+                    VALUES (?, NULL, ?, ?, ?, 'pending')
+                ");
+                $stmt->execute([$_SESSION['user_id'] ?? 1, $orderNumber, $total, $total]);
                 $orderId = $pdo->lastInsertId();
 
                 // Add order items and update stock
-                $itemStmt = $pdo->prepare("INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)");
-                $stockStmt = $pdo->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?");
+                $itemStmt = $pdo->prepare("
+                    INSERT INTO order_item (order_id, product_id, quantity, unit_price, total_price) 
+                    VALUES (?, ?, ?, ?, ?)
+                ");
+                $stockStmt = $pdo->prepare("UPDATE product SET stock = stock - ? WHERE product_id = ? AND stock >= ?");
                 
                 foreach ($products as $p) {
-                    $qty = $_SESSION['cart'][$p['id']];
-                    $itemStmt->execute([$orderId, $p['id'], $qty, $p['price']]);
+                    $qty = $_SESSION['cart'][$p['product_id']];
+                    $totalPrice = $p['price'] * $qty;
+                    $itemStmt->execute([$orderId, $p['product_id'], $qty, $p['price'], $totalPrice]);
                     
                     // Update stock
-                    $stockStmt->execute([$qty, $p['id'], $qty]);
+                    $stockStmt->execute([$qty, $p['product_id'], $qty]);
                     if ($stockStmt->rowCount() === 0) {
-                        throw new Exception("Not enough stock for product: " . $p['name']);
+                        throw new Exception("Not enough stock for product: " . $p['product_name']);
                     }
                 }
+
+                // Add order status history
+                $historyStmt = $pdo->prepare("
+                    INSERT INTO order_status_history (order_id, status_from, status_to, changed_by)
+                    VALUES (?, NULL, 'pending', ?)
+                ");
+                $historyStmt->execute([$orderId, $_SESSION['user_id'] ?? 1]);
 
                 $pdo->commit();
                 
@@ -105,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form method="post" class="checkout-form">
             <input type="hidden" name="csrf_token" value="<?= generateCSRFToken() ?>">
             <label>Full name <span class="required">*</span>
-                <input type="text" name="name" value="<?= isset($_POST['name']) ? sanitize($_POST['name']) : '' ?>" required>
+                <input type="text" name="name" value="<?= isset($_POST['name']) ? sanitize($_POST['name']) : (isset($_SESSION['user_name']) ? sanitize($_SESSION['user_name']) : '') ?>" required>
             </label>
             <label>Email <span class="required">*</span>
                 <input type="email" name="email" value="<?= isset($_POST['email']) ? sanitize($_POST['email']) : '' ?>" required>
@@ -133,14 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <h2>Order summary</h2>
         <?php foreach ($products as $p): ?>
             <div class="summary-row">
-                <span><?= sanitize($p['name']) ?> × <?= $_SESSION['cart'][$p['id']] ?></span>
-                <strong><?= formatPrice($p['price'] * $_SESSION['cart'][$p['id']]) ?></strong>
+                <span class="item-name"><?= sanitize($p['product_name']) ?> × <?= $_SESSION['cart'][$p['product_id']] ?></span>
+                <span class="item-price"><?= formatPrice($p['price'] * $_SESSION['cart'][$p['product_id']]) ?></span>
             </div>
         <?php endforeach; ?>
         <div class="summary-total">
             <span>Total</span>
             <strong><?= formatPrice($total) ?></strong>
         </div>
+        <p style="margin-top: 16px; font-size: 13px; color: var(--muted);">
+            <small>Your payment is secure. No card details are stored.</small>
+        </p>
     </aside>
 </section>
 

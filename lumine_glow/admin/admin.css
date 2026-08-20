@@ -1,0 +1,15 @@
+/* Add to admin.css */
+.admin-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.admin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 30px;
+}

@@ -6,7 +6,7 @@ $products = [];
 $error = null;
 
 try {
-    // Check if products table exists
+    // Check if product table exists
     $stmt = $pdo->query("SHOW TABLES LIKE 'product'");
     if ($stmt->rowCount() == 0) {
         $error = 'Products table does not exist. Please run the SQL file in MySQL Workbench.';
@@ -18,20 +18,20 @@ try {
         if ($count == 0) {
             $error = 'No products found. Please insert sample data from the SQL file.';
         } else {
-            // Get featured products
-            $stmt = $pdo->query("SELECT * FROM vw_product_details ORDER BY product_id DESC LIMIT 8");
+            // Get featured products with category name
+            $stmt = $pdo->query("
+                SELECT p.*, c.category_name 
+                FROM product p
+                LEFT JOIN category c ON p.category_id = c.category_id
+                ORDER BY p.product_id DESC 
+                LIMIT 8
+            ");
             $products = $stmt->fetchAll();
-            
-            if (empty($products)) {
-                // Fallback: try direct query without view
-                $stmt = $pdo->query("SELECT * FROM product ORDER BY product_id DESC LIMIT 8");
-                $products = $stmt->fetchAll();
-            }
         }
     }
 } catch (PDOException $e) {
     error_log('Error fetching products: ' . $e->getMessage());
-    $error = 'Unable to load products. Please check database connection. Error: ' . $e->getMessage();
+    $error = 'Unable to load products. Please check database connection.';
 }
 ?>
 <!DOCTYPE html>
@@ -55,7 +55,12 @@ try {
     </div>
 <?php endif; ?>
 
-<section class="hero">
+<!-- ============================================
+     HERO SECTION WITH BACKGROUND IMAGE
+     ============================================ -->
+<section class="hero" style="background-image: url('assets/image/dp.png'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+    <div class="hero-overlay"></div>
+    
     <div class="hero-content">
         <p class="eyebrow">BEAUTY, SIMPLIFIED</p>
         <h1>Glow in your<br><em>own shade.</em></h1>
@@ -102,13 +107,13 @@ try {
         <?php foreach ($products as $product): ?>
             <article class="product-card">
                 <div class="product-image">
-                    <div class="product-placeholder"><?= sanitize($product['category_name'] ?? $product['category'] ?? 'Product') ?></div>
+                    <div class="product-placeholder"><?= sanitize($product['category_name'] ?? 'Product') ?></div>
                 </div>
                 <div class="product-info">
-                    <p class="product-category"><?= sanitize($product['category_name'] ?? $product['category'] ?? '') ?></p>
-                    <h3><?= sanitize($product['product_name'] ?? $product['name'] ?? '') ?></h3>
-                    <p class="price"><?= formatPrice($product['price'] ?? 0) ?></p>
-                    <a href="product.php?id=<?= $product['product_id'] ?? $product['id'] ?? 0 ?>" class="text-link">View product →</a>
+                    <p class="product-category"><?= sanitize($product['category_name'] ?? '') ?></p>
+                    <h3><?= sanitize($product['product_name']) ?></h3>
+                    <p class="price"><?= formatPrice($product['price']) ?></p>
+                    <a href="product.php?id=<?= $product['product_id'] ?>" class="text-link">View product →</a>
                 </div>
             </article>
         <?php endforeach; ?>

@@ -9,10 +9,18 @@
 // ============================================
 
 function sanitize($input) {
+    // Handle null values
+    if ($input === null) {
+        return '';
+    }
+    
     if (is_array($input)) {
         return array_map('sanitize', $input);
     }
-    return htmlspecialchars(trim($input), ENT_QUOTES, 'UTF-8');
+    
+    // Convert to string if needed
+    $string = (string)$input;
+    return htmlspecialchars(trim($string), ENT_QUOTES, 'UTF-8');
 }
 
 function validateEmail($email) {
@@ -113,6 +121,12 @@ function getUserById($pdo, $userId) {
     return $stmt->fetch();
 }
 
+function getUserByEmail($pdo, $email) {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    return $stmt->fetch();
+}
+
 // ============================================
 // CART FUNCTIONS
 // ============================================
@@ -126,7 +140,13 @@ function getCartItems($pdo) {
     
     $ids = array_keys($_SESSION['cart']);
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = $pdo->prepare("SELECT * FROM vw_product_details WHERE product_id IN ($placeholders)");
+    
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.category_name 
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        WHERE p.product_id IN ($placeholders)
+    ");
     $stmt->execute($ids);
     $items = $stmt->fetchAll();
     
@@ -259,9 +279,11 @@ function updateOrderStatus($pdo, $orderId, $newStatus, $userId = null) {
 
 function getOrdersByUser($pdo, $userId) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_order_summary 
-        WHERE customer_email = (SELECT email FROM users WHERE user_id = ?)
-        ORDER BY order_date DESC
+        SELECT o.*, u.name as customer_name
+        FROM `order` o
+        LEFT JOIN users u ON o.user_id = u.user_id
+        WHERE o.user_id = ?
+        ORDER BY o.order_date DESC
     ");
     $stmt->execute([$userId]);
     return $stmt->fetchAll();
@@ -269,7 +291,10 @@ function getOrdersByUser($pdo, $userId) {
 
 function getOrderDetails($pdo, $orderId) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_order_summary WHERE order_id = ?
+        SELECT o.*, u.name as customer_name, u.email as customer_email
+        FROM `order` o
+        LEFT JOIN users u ON o.user_id = u.user_id
+        WHERE o.order_id = ?
     ");
     $stmt->execute([$orderId]);
     $order = $stmt->fetch();
@@ -293,13 +318,42 @@ function getOrderDetails($pdo, $orderId) {
 // ============================================
 
 function getProductById($pdo, $productId) {
-    $stmt = $pdo->prepare("SELECT * FROM vw_product_details WHERE product_id = ?");
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.product_id = ?
+    ");
     $stmt->execute([$productId]);
     return $stmt->fetch();
 }
 
+function getAllProducts($pdo, $limit = null) {
+    $sql = "
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        ORDER BY p.product_id DESC
+    ";
+    if ($limit) {
+        $sql .= " LIMIT " . intval($limit);
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute();
+    return $stmt->fetchAll();
+}
+
 function getProductsByCategory($pdo, $categoryId, $limit = null) {
-    $sql = "SELECT * FROM vw_product_details WHERE category_id = ? ORDER BY product_id DESC";
+    $sql = "
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.category_id = ? 
+        ORDER BY p.product_id DESC
+    ";
     if ($limit) {
         $sql .= " LIMIT " . intval($limit);
     }
@@ -308,11 +362,27 @@ function getProductsByCategory($pdo, $categoryId, $limit = null) {
     return $stmt->fetchAll();
 }
 
+function getProductsByCategoryName($pdo, $categoryName) {
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE c.category_name = ?
+        ORDER BY p.product_id DESC
+    ");
+    $stmt->execute([$categoryName]);
+    return $stmt->fetchAll();
+}
+
 function getProductsBySkinType($pdo, $skinType) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_product_details 
-        WHERE skin_type = ? OR skin_type = 'all'
-        ORDER BY product_id DESC
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.skin_type = ? OR p.skin_type = 'all'
+        ORDER BY p.product_id DESC
     ");
     $stmt->execute([$skinType]);
     return $stmt->fetchAll();
@@ -320,9 +390,12 @@ function getProductsBySkinType($pdo, $skinType) {
 
 function getProductsBySkinTone($pdo, $skinTone) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_product_details 
-        WHERE skin_tone = ? OR skin_tone = 'all'
-        ORDER BY product_id DESC
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.skin_tone = ? OR p.skin_tone = 'all'
+        ORDER BY p.product_id DESC
     ");
     $stmt->execute([$skinTone]);
     return $stmt->fetchAll();
@@ -330,9 +403,12 @@ function getProductsBySkinTone($pdo, $skinTone) {
 
 function getFeaturedProducts($pdo, $limit = 8) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_product_details 
-        WHERE is_featured = 1 
-        ORDER BY product_id DESC 
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.is_featured = 1 
+        ORDER BY p.product_id DESC 
         LIMIT ?
     ");
     $stmt->execute([$limit]);
@@ -341,9 +417,12 @@ function getFeaturedProducts($pdo, $limit = 8) {
 
 function getBestsellers($pdo, $limit = 8) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_product_details 
-        WHERE is_bestseller = 1 
-        ORDER BY product_id DESC 
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.is_bestseller = 1 
+        ORDER BY p.product_id DESC 
         LIMIT ?
     ");
     $stmt->execute([$limit]);
@@ -352,9 +431,12 @@ function getBestsellers($pdo, $limit = 8) {
 
 function searchProducts($pdo, $query) {
     $stmt = $pdo->prepare("
-        SELECT * FROM vw_product_details 
-        WHERE product_name LIKE ? OR description LIKE ?
-        ORDER BY product_id DESC
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE p.product_name LIKE ? OR p.description LIKE ?
+        ORDER BY p.product_id DESC
     ");
     $searchTerm = "%$query%";
     $stmt->execute([$searchTerm, $searchTerm]);
@@ -436,8 +518,27 @@ function saveBeautyProfile($pdo, $userId, $data) {
 }
 
 function getProductRecommendations($pdo, $userId) {
-    $stmt = $pdo->prepare("CALL GetProductRecommendations(?)");
-    $stmt->execute([$userId]);
+    $profile = getBeautyProfile($pdo, $userId);
+    if (!$profile) {
+        return getFeaturedProducts($pdo, 8);
+    }
+    
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE (p.skin_type = ? OR p.skin_type = 'all')
+        AND (p.skin_tone = ? OR p.skin_tone = 'all')
+        AND (p.concern = ? OR p.concern = 'all')
+        ORDER BY p.is_featured DESC, p.is_bestseller DESC
+        LIMIT 8
+    ");
+    $stmt->execute([
+        $profile['skin_type'] ?? 'all',
+        $profile['skin_tone'] ?? 'all',
+        $profile['concern'] ?? 'all'
+    ]);
     return $stmt->fetchAll();
 }
 
@@ -503,7 +604,6 @@ function addReview($pdo, $userId, $productId, $orderId, $rating, $comment) {
 }
 
 function getUserCanReview($pdo, $userId, $productId) {
-    // Check if user has purchased this product
     $stmt = $pdo->prepare("
         SELECT COUNT(*) FROM order_item oi
         LEFT JOIN `order` o ON oi.order_id = o.order_id
@@ -511,6 +611,16 @@ function getUserCanReview($pdo, $userId, $productId) {
     ");
     $stmt->execute([$userId, $productId]);
     return $stmt->fetchColumn() > 0;
+}
+
+function getProductAverageRating($pdo, $productId) {
+    $stmt = $pdo->prepare("
+        SELECT AVG(rating) as avg_rating, COUNT(*) as total_reviews
+        FROM review
+        WHERE product_id = ? AND status = 'approved'
+    ");
+    $stmt->execute([$productId]);
+    return $stmt->fetch();
 }
 
 // ============================================
@@ -563,6 +673,11 @@ function applyPromoCode($pdo, $promoId) {
     return $stmt->execute([$promoId]);
 }
 
+function getAllPromoCodes($pdo) {
+    $stmt = $pdo->query("SELECT * FROM promo_code ORDER BY promo_id DESC");
+    return $stmt->fetchAll();
+}
+
 // ============================================
 // ADDRESS FUNCTIONS
 // ============================================
@@ -580,7 +695,6 @@ function getDefaultAddress($pdo, $userId) {
 }
 
 function addAddress($pdo, $userId, $data) {
-    // If this is the first address or set as default, unset other defaults
     if ($data['is_default'] ?? false) {
         $stmt = $pdo->prepare("UPDATE address SET is_default = 0 WHERE user_id = ?");
         $stmt->execute([$userId]);
@@ -599,6 +713,28 @@ function addAddress($pdo, $userId, $data) {
         $data['country'] ?? 'Sri Lanka',
         $data['is_default'] ?? false
     ]);
+}
+
+function updateAddress($pdo, $addressId, $data) {
+    $stmt = $pdo->prepare("
+        UPDATE address 
+        SET street = ?, city = ?, state = ?, postal_code = ?, country = ?, is_default = ?
+        WHERE address_id = ?
+    ");
+    return $stmt->execute([
+        $data['street'],
+        $data['city'],
+        $data['state'] ?? null,
+        $data['postal_code'] ?? null,
+        $data['country'] ?? 'Sri Lanka',
+        $data['is_default'] ?? false,
+        $addressId
+    ]);
+}
+
+function deleteAddress($pdo, $addressId, $userId) {
+    $stmt = $pdo->prepare("DELETE FROM address WHERE address_id = ? AND user_id = ?");
+    return $stmt->execute([$addressId, $userId]);
 }
 
 // ============================================
@@ -628,7 +764,14 @@ function getStatusBadge($status) {
         'rejected' => 'danger',
         'completed' => 'success',
         'failed' => 'danger',
-        'refunded' => 'warning'
+        'refunded' => 'warning',
+        'active' => 'success',
+        'inactive' => 'secondary',
+        'suspended' => 'danger',
+        'customer' => 'primary',
+        'admin' => 'danger',
+        'editor' => 'info',
+        'guest' => 'secondary'
     ];
     $class = $badges[$status] ?? 'secondary';
     return "<span class='badge badge-$class'>" . ucfirst($status) . "</span>";
@@ -646,6 +789,12 @@ function getAllCategories($pdo) {
 function getCategoryById($pdo, $categoryId) {
     $stmt = $pdo->prepare("SELECT * FROM category WHERE category_id = ?");
     $stmt->execute([$categoryId]);
+    return $stmt->fetch();
+}
+
+function getCategoryByName($pdo, $categoryName) {
+    $stmt = $pdo->prepare("SELECT * FROM category WHERE category_name = ?");
+    $stmt->execute([$categoryName]);
     return $stmt->fetch();
 }
 
@@ -692,14 +841,19 @@ function updateShipmentStatus($pdo, $shipmentId, $status) {
     return $stmt->execute([$status, $shipmentId]);
 }
 
+function getAllCouriers($pdo) {
+    $stmt = $pdo->query("SELECT * FROM courier WHERE is_active = 1");
+    return $stmt->fetchAll();
+}
+
 // ============================================
-// STATISTICS & ANALYTICS FUNCTIONS
+// ADMIN / STATISTICS FUNCTIONS
 // ============================================
 
 function getDashboardStats($pdo) {
     $stats = [];
     
-    // Total users
+    // Total customers
     $stmt = $pdo->query("SELECT COUNT(*) FROM users WHERE role = 'customer'");
     $stats['total_customers'] = $stmt->fetchColumn();
     
@@ -708,8 +862,8 @@ function getDashboardStats($pdo) {
     $stats['total_orders'] = $stmt->fetchColumn();
     
     // Total revenue
-    $stmt = $pdo->query("SELECT SUM(total_amount) FROM `order` WHERE order_status = 'delivered'");
-    $stats['total_revenue'] = $stmt->fetchColumn() ?? 0;
+    $stmt = $pdo->query("SELECT COALESCE(SUM(total_amount), 0) FROM `order` WHERE order_status = 'delivered'");
+    $stats['total_revenue'] = $stmt->fetchColumn();
     
     // Pending orders
     $stmt = $pdo->query("SELECT COUNT(*) FROM `order` WHERE order_status = 'pending'");
@@ -727,7 +881,7 @@ function getSalesData($pdo, $days = 30) {
         SELECT 
             DATE(order_date) as date,
             COUNT(*) as orders,
-            SUM(total_amount) as revenue
+            COALESCE(SUM(total_amount), 0) as revenue
         FROM `order`
         WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
         GROUP BY DATE(order_date)
@@ -743,18 +897,282 @@ function getTopProducts($pdo, $limit = 10) {
             p.product_id,
             p.product_name,
             p.price,
-            COUNT(oi.order_item_id) as total_sold,
-            SUM(oi.quantity) as total_quantity,
-            SUM(oi.total_price) as total_revenue
+            COALESCE(SUM(oi.quantity), 0) as total_quantity,
+            COALESCE(SUM(oi.total_price), 0) as total_revenue
         FROM product p
         LEFT JOIN order_item oi ON p.product_id = oi.product_id
-        LEFT JOIN `order` o ON oi.order_id = o.order_id
-        WHERE o.order_status = 'delivered' OR o.order_status IS NULL
+        LEFT JOIN `order` o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
         GROUP BY p.product_id
         ORDER BY total_quantity DESC, total_revenue DESC
         LIMIT ?
     ");
     $stmt->execute([$limit]);
+    return $stmt->fetchAll();
+}
+
+function getRecentOrders($pdo, $limit = 10) {
+    $stmt = $pdo->prepare("
+        SELECT o.*, u.name as customer_name, u.email as customer_email
+        FROM `order` o
+        LEFT JOIN users u ON o.user_id = u.user_id
+        ORDER BY o.order_date DESC
+        LIMIT ?
+    ");
+    $stmt->execute([$limit]);
+    return $stmt->fetchAll();
+}
+
+function getUserRegistrations($pdo, $days = 7) {
+    $stmt = $pdo->prepare("
+        SELECT user_id, name, email, role, status, created_at
+        FROM users
+        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        ORDER BY created_at DESC
+    ");
+    $stmt->execute([$days]);
+    return $stmt->fetchAll();
+}
+
+function getCategorySales($pdo) {
+    $stmt = $pdo->prepare("
+        SELECT 
+            c.category_name,
+            COALESCE(SUM(oi.quantity), 0) as total_quantity,
+            COALESCE(SUM(oi.total_price), 0) as total_sales
+        FROM category c
+        LEFT JOIN product p ON c.category_id = p.category_id
+        LEFT JOIN order_item oi ON p.product_id = oi.product_id
+        LEFT JOIN `order` o ON oi.order_id = o.order_id AND o.order_status = 'delivered'
+        GROUP BY c.category_id
+        ORDER BY total_sales DESC
+    ");
+    $stmt->execute();
+    return $stmt->fetchAll();
+}
+
+function getMonthlySales($pdo, $year = null) {
+    if (!$year) {
+        $year = date('Y');
+    }
+    $stmt = $pdo->prepare("
+        SELECT 
+            MONTH(order_date) as month,
+            COUNT(*) as orders,
+            COALESCE(SUM(total_amount), 0) as revenue
+        FROM `order`
+        WHERE YEAR(order_date) = ? AND order_status = 'delivered'
+        GROUP BY MONTH(order_date)
+        ORDER BY month ASC
+    ");
+    $stmt->execute([$year]);
+    return $stmt->fetchAll();
+}
+
+function getOrderStatusDistribution($pdo) {
+    $stmt = $pdo->query("
+        SELECT 
+            order_status,
+            COUNT(*) as count
+        FROM `order`
+        GROUP BY order_status
+    ");
+    return $stmt->fetchAll();
+}
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+function generateOrderNumber() {
+    return 'ORD-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
+}
+
+function generateTrackingNumber() {
+    return 'TRK-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -6));
+}
+
+function getTimeAgo($datetime) {
+    $timestamp = strtotime($datetime);
+    $difference = time() - $timestamp;
+    
+    if ($difference < 60) {
+        return $difference . ' seconds ago';
+    } elseif ($difference < 3600) {
+        return round($difference / 60) . ' minutes ago';
+    } elseif ($difference < 86400) {
+        return round($difference / 3600) . ' hours ago';
+    } elseif ($difference < 604800) {
+        return round($difference / 86400) . ' days ago';
+    } else {
+        return formatDate($datetime);
+    }
+}
+
+function getStatusColor($status) {
+    $colors = [
+        'pending' => '#ed6c02',
+        'processing' => '#0288d1',
+        'shipped' => '#2e7d32',
+        'delivered' => '#1b5e20',
+        'cancelled' => '#d32f2f',
+        'approved' => '#2e7d32',
+        'rejected' => '#d32f2f',
+        'completed' => '#2e7d32',
+        'failed' => '#d32f2f',
+        'refunded' => '#ed6c02',
+        'active' => '#2e7d32',
+        'inactive' => '#616161',
+        'suspended' => '#d32f2f'
+    ];
+    return $colors[$status] ?? '#616161';
+}
+
+function truncateText($text, $length = 100, $suffix = '...') {
+    if (strlen($text) <= $length) {
+        return $text;
+    }
+    return substr($text, 0, $length) . $suffix;
+}
+
+function getCurrencySymbol($currency = 'LKR') {
+    $symbols = [
+        'LKR' => 'Rs.',
+        'USD' => '$',
+        'EUR' => '€',
+        'GBP' => '£'
+    ];
+    return $symbols[$currency] ?? 'Rs.';
+}
+
+// ============================================
+// ERROR LOGGING FUNCTIONS
+// ============================================
+
+function logError($message, $context = []) {
+    $logEntry = date('Y-m-d H:i:s') . ' - ' . $message;
+    if (!empty($context)) {
+        $logEntry .= ' - ' . json_encode($context);
+    }
+    error_log($logEntry);
+}
+
+function logUserAction($pdo, $userId, $action, $details = null) {
+    // This function would log user actions for audit purposes
+    // You can create a user_activity_logs table for this
+    $stmt = $pdo->prepare("
+        INSERT INTO user_activity_logs (user_id, action, details, ip_address)
+        VALUES (?, ?, ?, ?)
+    ");
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    return $stmt->execute([$userId, $action, $details, $ip]);
+}
+
+// ============================================
+// SESSION MANAGEMENT FUNCTIONS
+// ============================================
+
+function regenerateSession() {
+    session_regenerate_id(true);
+}
+
+function destroySession() {
+    $_SESSION = array();
+    session_destroy();
+}
+
+function setUserSession($user) {
+    $_SESSION['user_id'] = $user['user_id'];
+    $_SESSION['user_name'] = $user['name'];
+    $_SESSION['user_email'] = $user['email'];
+    $_SESSION['user_role'] = $user['role'];
+}
+
+function isAdmin() {
+    return isLoggedIn() && $_SESSION['user_role'] === 'admin';
+}
+
+function isEditor() {
+    return isLoggedIn() && ($_SESSION['user_role'] === 'editor' || $_SESSION['user_role'] === 'admin');
+}
+
+function isCustomer() {
+    return isLoggedIn() && $_SESSION['user_role'] === 'customer';
+}
+
+// ============================================
+// REDIRECT FUNCTIONS
+// ============================================
+
+function redirectTo($url) {
+    header('Location: ' . $url);
+    exit;
+}
+
+function redirectBack() {
+    $referer = $_SERVER['HTTP_REFERER'] ?? 'index.php';
+    header('Location: ' . $referer);
+    exit;
+}
+
+function redirectWithMessage($url, $type, $message) {
+    setFlashMessage($type, $message);
+    redirectTo($url);
+}
+
+// ============================================
+// PRODUCT FILTER FUNCTIONS
+// ============================================
+
+function getFilteredProducts($pdo, $filters = []) {
+    $sql = "
+        SELECT p.*, c.category_name, b.brand_name
+        FROM product p
+        LEFT JOIN category c ON p.category_id = c.category_id
+        LEFT JOIN brand b ON p.brand_id = b.brand_id
+        WHERE 1=1
+    ";
+    $params = [];
+    
+    if (!empty($filters['category'])) {
+        $sql .= " AND c.category_name = ?";
+        $params[] = $filters['category'];
+    }
+    
+    if (!empty($filters['brand'])) {
+        $sql .= " AND b.brand_name = ?";
+        $params[] = $filters['brand'];
+    }
+    
+    if (!empty($filters['skin_type'])) {
+        $sql .= " AND (p.skin_type = ? OR p.skin_type = 'all')";
+        $params[] = $filters['skin_type'];
+    }
+    
+    if (!empty($filters['skin_tone'])) {
+        $sql .= " AND (p.skin_tone = ? OR p.skin_tone = 'all')";
+        $params[] = $filters['skin_tone'];
+    }
+    
+    if (!empty($filters['min_price'])) {
+        $sql .= " AND p.price >= ?";
+        $params[] = $filters['min_price'];
+    }
+    
+    if (!empty($filters['max_price'])) {
+        $sql .= " AND p.price <= ?";
+        $params[] = $filters['max_price'];
+    }
+    
+    if (!empty($filters['search'])) {
+        $sql .= " AND (p.product_name LIKE ? OR p.description LIKE ?)";
+        $params[] = "%{$filters['search']}%";
+        $params[] = "%{$filters['search']}%";
+    }
+    
+    $sql .= " ORDER BY p.product_id DESC";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     return $stmt->fetchAll();
 }
 ?>

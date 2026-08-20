@@ -2,22 +2,31 @@
 require_once 'includes/db.php';
 require_once 'includes/functions.php';
 
-$category = $_GET['category'] ?? '';
+$category = trim($_GET['category'] ?? '');
 $search = trim($_GET['search'] ?? '');
 
-$sql = "SELECT * FROM products WHERE 1=1";
+// Build the query with JOIN to get category name
+$sql = "
+    SELECT p.*, c.category_name 
+    FROM product p
+    LEFT JOIN category c ON p.category_id = c.category_id
+    WHERE 1=1
+";
 $params = [];
 
 if ($category !== '') {
-    $sql .= " AND category = ?";
+    // Search by category name instead of category_id
+    $sql .= " AND c.category_name = ?";
     $params[] = $category;
 }
+
 if ($search !== '') {
-    $sql .= " AND (name LIKE ? OR description LIKE ?)";
+    $sql .= " AND (p.product_name LIKE ? OR p.description LIKE ?)";
     $params[] = "%$search%";
     $params[] = "%$search%";
 }
-$sql .= " ORDER BY id DESC";
+
+$sql .= " ORDER BY p.product_id DESC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -61,12 +70,14 @@ $products = $stmt->fetchAll();
     <div class="product-grid">
         <?php foreach ($products as $product): ?>
         <article class="product-card">
-            <div class="product-image"><div class="product-placeholder"><?= sanitize($product['category']) ?></div></div>
+            <div class="product-image">
+                <div class="product-placeholder"><?= sanitize($product['category_name'] ?? 'Product') ?></div>
+            </div>
             <div class="product-info">
-                <p class="product-category"><?= sanitize($product['category']) ?></p>
-                <h3><?= sanitize($product['name']) ?></h3>
+                <p class="product-category"><?= sanitize($product['category_name'] ?? '') ?></p>
+                <h3><?= sanitize($product['product_name']) ?></h3>
                 <p class="price"><?= formatPrice($product['price']) ?></p>
-                <a href="product.php?id=<?= $product['id'] ?>" class="text-link">View product →</a>
+                <a href="product.php?id=<?= $product['product_id'] ?>" class="text-link">View product →</a>
             </div>
         </article>
         <?php endforeach; ?>

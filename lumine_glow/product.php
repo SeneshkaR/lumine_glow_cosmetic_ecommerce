@@ -9,7 +9,16 @@ if ($id <= 0) {
     exit;
 }
 
-$product = getProductById($pdo, $id);
+// Use JOIN to get category name and brand name
+$stmt = $pdo->prepare("
+    SELECT p.*, c.category_name, b.brand_name
+    FROM product p
+    LEFT JOIN category c ON p.category_id = c.category_id
+    LEFT JOIN brand b ON p.brand_id = b.brand_id
+    WHERE p.product_id = ?
+");
+$stmt->execute([$id]);
+$product = $stmt->fetch();
 
 if (!$product) {
     http_response_code(404);
@@ -21,7 +30,7 @@ if (!$product) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= sanitize($product['name']) ?> | Luminé Glow</title>
+    <title><?= sanitize($product['product_name']) ?> | Luminé Glow</title>
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
@@ -29,18 +38,18 @@ if (!$product) {
 
 <section class="product-detail section">
     <div class="detail-image">
-        <div class="product-placeholder large"><?= sanitize($product['category']) ?></div>
+        <div class="product-placeholder large"><?= sanitize($product['category_name'] ?? 'Product') ?></div>
     </div>
     <div class="detail-content">
-        <p class="eyebrow"><?= sanitize($product['category']) ?></p>
-        <h1><?= sanitize($product['name']) ?></h1>
+        <p class="eyebrow"><?= sanitize($product['category_name'] ?? '') ?></p>
+        <h1><?= sanitize($product['product_name']) ?></h1>
         <p class="detail-price"><?= formatPrice($product['price']) ?></p>
         <p class="description"><?= sanitize($product['description']) ?></p>
         <p class="stock-info <?= $product['stock'] <= 0 ? 'out-of-stock' : '' ?>">
             <?= $product['stock'] > 0 ? '✓ In Stock' : '✗ Out of Stock' ?>
         </p>
 
-        <?php if ($product['category'] === 'Makeup' || $product['category'] === 'Lips'): ?>
+        <?php if (($product['category_name'] ?? '') === 'Makeup' || ($product['category_name'] ?? '') === 'Lips'): ?>
         <label class="label">Choose shade</label>
         <select id="shade" class="select">
             <option>Rose Nude</option>
@@ -52,7 +61,7 @@ if (!$product) {
 
         <form action="cart.php" method="post" class="add-form">
             <input type="hidden" name="action" value="add">
-            <input type="hidden" name="product_id" value="<?= $product['id'] ?>">
+            <input type="hidden" name="product_id" value="<?= $product['product_id'] ?>">
             <input type="hidden" name="csrf_token" value="<?= generateCSRFToken() ?>">
             <label class="label">Quantity</label>
             <input class="quantity" type="number" name="quantity" value="1" min="1" max="<?= min(10, $product['stock']) ?>" <?= $product['stock'] <= 0 ? 'disabled' : '' ?>>
